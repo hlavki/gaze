@@ -16,7 +16,13 @@ pub fn enumerate_cameras() -> anyhow::Result<Vec<(String, String)>> {
 }
 
 pub fn enumerate_ir_cameras() -> anyhow::Result<Vec<(String, String)>> {
-    let mono = collect_camera_entries(Some(false))?;
+    let libcamera = libcamera_ir_entries();
+    let mut mono = match collect_camera_entries(Some(false)) {
+        Ok(mono) => mono,
+        Err(err) if libcamera.is_empty() => return Err(err),
+        Err(_) => Vec::new(),
+    };
+    mono.extend(libcamera);
     if !mono.is_empty() {
         return Ok(label_camera_entries(mono));
     }
@@ -60,6 +66,28 @@ pub(super) struct CameraEntry {
     pub(super) display_name: String,
     pub(super) target: String,
     pub(super) node: Option<String>,
+}
+
+/// MIPI IR sensors (Intel IPU6/IPU7) that only libcamera can drive. PipeWire lists them as
+/// color cameras, if at all, so they are recognised by their kernel IR flood LED instead.
+fn libcamera_ir_entries() -> Vec<CameraEntry> {
+    libcamera_camera_names()
+        .iter()
+        .filter(|name| libcamera_flood_led(&libcamera_source(name)).is_some())
+        .map(|name| libcamera_ir_entry(name))
+        .collect()
+}
+
+fn libcamera_source(camera_name: &str) -> String {
+    format!("{LIBCAMERA_SOURCE_PREFIX}{camera_name}")
+}
+
+pub(super) fn libcamera_ir_entry(camera_name: &str) -> CameraEntry {
+    CameraEntry {
+        display_name: format!("Infrared camera {camera_name} (libcamera)"),
+        target: libcamera_source(camera_name),
+        node: None,
+    }
 }
 
 pub(super) fn label_camera_entries(entries: Vec<CameraEntry>) -> Vec<(String, String)> {
@@ -250,6 +278,18 @@ mod tests {
 
         assert_eq!(labelled[0].0, "ASUS 5M webcam (V4L2)");
         assert_eq!(labelled[1].0, "ASUS 5M webcam (V4L2) (/dev/video2)");
+    }
+
+    #[test]
+    fn a_libcamera_ir_sensor_is_offered_as_a_libcamera_source() {
+        let entry = libcamera_ir_entry("\\_SB_.LNK0");
+        assert_eq!(
+            entry.display_name,
+            "Infrared camera \\_SB_.LNK0 (libcamera)"
+        );
+        assert_eq!(entry.target, "libcamera:\\_SB_.LNK0");
+        assert_eq!(parse_libcamera_spec(&entry.target), Some("\\_SB_.LNK0"));
+        assert_eq!(entry.node, None);
     }
 
     #[test]

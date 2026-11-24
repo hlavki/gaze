@@ -3,5 +3,6 @@
 
 pub mod bridge;
 pub mod devices;
+pub mod flood_led;
 pub mod i2c;
 pub mod led;

@@ -549,9 +549,34 @@ the emitter bit and reads the register back. `gaze doctor` reports which check
 failed. This register value has only been verified with the Surface Pro 4 wiring,
 so it may not work with other Surface models or OV7251 devices.
 
+MIPI IR sensors behind an Intel IPU6/IPU7 (for example the Himax HM1092 in recent Dell XPS
+laptops) have no control of their own for the illuminator. The kernel's INT3472 driver exposes
+it as an LED class device named `<sensor>::ir_flood_led`, and Gaze switches that LED when
+`cameras.ir` is a libcamera source for the same sensor:
+
+```toml
+[cameras]
+ir = 'libcamera:\_SB_.LNK0'   # a name from `cam --list`; the IR picker offers it too
+emitter_enabled = true
+```
+
+The IR camera picker lists a libcamera camera as infrared when the kernel registered such an
+LED for it, because libcamera's software ISP reports the sensor with color formats. The LED is
+driven through sysfs, which `gazed.service` mounts read-only (`ProtectKernelTunables`). Allow
+the one LED with a drop-in (`sudo systemctl edit gazed`), using the path printed by
+`readlink -f /sys/class/leds/*::ir_flood_led`:
+
+```ini
+[Service]
+ReadWritePaths=/sys/devices/platform/INT3472:00/leds
+```
+
+`gaze doctor` reports the LED it found, and the daemon log names the path to allow when the
+write is refused.
+
 On the IR path, liveness uses eye-motion analysis across frames; the RGB MiniFASNet model is not applied to infrared. You can add an IR anti-spoof model with `ir_model`; see [IR anti-spoof model](#ir-anti-spoof-model).
 
-Driving the emitter blaster needs read/write access to the IR `/dev/video*` node. The daemon runs as root and is a member of the `video` group, so the default `root:video` device permissions are sufficient; no extra udev rule is required.
+Driving a UVC emitter blaster needs read/write access to the IR `/dev/video*` node. The daemon runs as root and is a member of the `video` group, so the default `root:video` device permissions are sufficient; no extra udev rule is required.
 
 ## Authentication options
 

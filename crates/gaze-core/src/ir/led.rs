@@ -4,6 +4,7 @@
 use crate::ir::devices::{
     CameraBus, IrControl, IrDevice, IrQuery, camera_bus, find_device, usb_ids_of,
 };
+use crate::ir::flood_led::FloodLed;
 use crate::ir::i2c::I2cEmitter;
 use std::collections::HashMap;
 use std::os::unix::io::AsRawFd;
@@ -99,6 +100,7 @@ pub struct IrLed {
 enum IrLedBackend {
     Uvc(IrProfile),
     I2c(I2cEmitter),
+    Sysfs(FloodLed),
 }
 
 impl IrLed {
@@ -124,6 +126,15 @@ impl IrLed {
         })
     }
 
+    /// Wraps an illuminator the kernel exposes as an LED class device. It has no video node,
+    /// so `node()` is the LED's sysfs directory.
+    pub fn for_flood_led(led: FloodLed) -> Self {
+        Self {
+            node: led.path().display().to_string(),
+            backend: IrLedBackend::Sysfs(led),
+        }
+    }
+
     pub fn node(&self) -> &str {
         &self.node
     }
@@ -132,6 +143,7 @@ impl IrLed {
         match &self.backend {
             IrLedBackend::Uvc(profile) => &profile.name,
             IrLedBackend::I2c(backend) => backend.name(),
+            IrLedBackend::Sysfs(led) => led.name(),
         }
     }
 
@@ -142,6 +154,7 @@ impl IrLed {
     pub fn set(&self, on: bool) -> anyhow::Result<()> {
         match &self.backend {
             IrLedBackend::I2c(backend) => backend.set(on),
+            IrLedBackend::Sysfs(led) => led.set(on),
             IrLedBackend::Uvc(profile) => {
                 let sequence = if on {
                     &profile.on_sequence
@@ -339,6 +352,25 @@ mod tests {
         assert_eq!(profile.source, "unit test");
         assert_eq!(profile.on_sequence[0].payload, &[1, 2, 3, 4]);
         assert_eq!(profile.off_sequence[0].payload, &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn a_flood_led_is_addressed_by_its_sysfs_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let flood_dir = dir.path().join("HIMX1092_00::ir_flood_led");
+        std::fs::create_dir(&flood_dir).unwrap();
+        std::fs::write(flood_dir.join("brightness"), "0").unwrap();
+
+        let led = IrLed::for_flood_led(FloodLed::at(&flood_dir));
+        assert_eq!(led.node(), flood_dir.to_str().unwrap());
+        assert_eq!(led.device_name(), "HIMX1092_00::ir_flood_led");
+        assert!(!led.needs_stream_refresh());
+
+        led.set(true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(flood_dir.join("brightness")).unwrap(),
+            "1"
+        );
     }
 
     #[test]

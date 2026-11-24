@@ -9,6 +9,7 @@ use gaze_core::config::{
 };
 use gaze_core::ir::bridge::read_bridge_marker;
 use gaze_core::ir::devices::{camera_function_of, find_device, usb_ids_of, video_driver};
+use gaze_core::ir::flood_led::FloodLed;
 
 use super::*;
 
@@ -660,6 +661,10 @@ pub(super) fn libcamera_color_source() -> Option<String> {
                 return None;
             }
             let name = element.property::<Option<String>>("camera-name")?;
+            // The software ISP debayers an IR sensor into "color" frames too.
+            if FloodLed::for_acpi_path(&name).is_some() {
+                return None;
+            }
             Some(libcamera_source_element(&name))
         })
 }
@@ -762,6 +767,17 @@ pub(super) fn libcamera_camera_for_source(source: &str) -> Option<String> {
     }
     let target = pipewire_libcamera_target(source)?;
     libcamera_camera_for_target(&target, &libcamera_camera_names()).map(str::to_string)
+}
+
+/// The kernel LED that illuminates a libcamera IR source, found through the sensor's ACPI path.
+/// It also tells an IR sensor apart from a color one, which libcamera's formats cannot.
+pub fn libcamera_flood_led(source: &str) -> Option<FloodLed> {
+    if let Some(name) = parse_libcamera_spec(source) {
+        return FloodLed::for_acpi_path(name);
+    }
+    let target = pipewire_libcamera_target(source)?;
+    let id = target.strip_prefix(PIPEWIRE_LIBCAMERA_NODE_PREFIX)?;
+    FloodLed::matching(|path| wireplumber_sanitize(path) == id)
 }
 
 pub fn libcamera_camera_names() -> Vec<String> {

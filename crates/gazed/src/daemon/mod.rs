@@ -31,7 +31,7 @@ use gaze_core::desktop::{
     gdm_greeter_dconf_source,
 };
 use gaze_core::ir::led::IrLed;
-use gaze_vision::camera::{Camera, CameraKind, resolve_configured_sources};
+use gaze_vision::camera::{Camera, CameraKind, libcamera_flood_led, resolve_configured_sources};
 use gaze_vision::detect::FaceDetector;
 use gaze_vision::face::{
     EnrollmentPoseStability, FaceChecker, IrDarkFrameGate, IrFrameKind, RgbFrameKind,
@@ -324,12 +324,18 @@ fn emitter_users() -> std::sync::MutexGuard<'static, HashMap<String, usize>> {
         .unwrap_or_else(|err| err.into_inner())
 }
 
+/// A libcamera source has no `/dev/video*` node to match a profile against; its illuminator is
+/// the kernel LED registered for the sensor.
+fn ir_led_for(source: &str, node: &str) -> Option<IrLed> {
+    IrLed::for_path(node).or_else(|| libcamera_flood_led(source).map(IrLed::for_flood_led))
+}
+
 impl EmitterGuard {
     fn engage(kind: &CameraKind, enabled: bool) -> Self {
         let mut activation_message = None;
         let mut refresh_pending = false;
         let led = match kind {
-            CameraKind::Ir { node, .. } if enabled => match IrLed::for_path(node) {
+            CameraKind::Ir { source, node } if enabled => match ir_led_for(source, node) {
                 Some(led) => {
                     *emitter_users().entry(led.node().to_string()).or_insert(0) += 1;
                     refresh_pending = led.needs_stream_refresh();
@@ -353,7 +359,8 @@ impl EmitterGuard {
                     Some(led)
                 }
                 None => {
-                    warn!("No IR emitter profile for {node}; continuing without illumination");
+                    let camera = if node.is_empty() { source } else { node };
+                    warn!("No IR emitter profile for {camera}; continuing without illumination");
                     None
                 }
             },

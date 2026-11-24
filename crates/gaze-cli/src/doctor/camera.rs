@@ -361,6 +361,13 @@ fn check_libcamera_camera(report: &mut Report, check: &'static str, key: &str, n
 }
 
 pub(super) fn check_i2c_emitter(report: &mut Report, ir: &str) {
+    if let Some(led) = gaze_vision::camera::libcamera_flood_led(ir) {
+        report.pass(
+            "IR emitter",
+            format!("kernel LED {} illuminates {ir}", led.name()),
+        );
+        return;
+    }
     let Some(node) = gaze_vision::camera::resolve_node(ir) else {
         return;
     };
